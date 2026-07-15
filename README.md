@@ -120,9 +120,10 @@ Open http://localhost:3000
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/v1/research` | Start job |
+| `GET` | `/api/v1/research` | List jobs (`?status=` optional filter) |
 | `GET` | `/api/v1/research/{id}` | Status + events |
 | `GET` | `/api/v1/research/{id}/report` | Final report |
-| `GET` | `/api/v1/research` | List jobs |
+| `POST` | `/api/v1/research/{id}/retry` | Re-queue failed/cancelled job |
 | `DELETE` | `/api/v1/research/{id}` | Cancel |
 | `GET` | `/health` | Liveness |
 

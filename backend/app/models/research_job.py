@@ -67,27 +67,35 @@ class ResearchJob(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     def mark_running(self) -> None:
-        from datetime import UTC
+        from datetime import timezone
 
         self.status = JobStatus.RUNNING.value
-        self.started_at = datetime.now(UTC)
+        self.started_at = datetime.now(timezone.utc)
 
     def mark_completed(self) -> None:
-        from datetime import UTC
+        from datetime import timezone
 
         self.status = JobStatus.COMPLETED.value
-        self.completed_at = datetime.now(UTC)
+        self.completed_at = datetime.now(timezone.utc)
         self.error = None
 
     def mark_failed(self, error: str) -> None:
-        from datetime import UTC
+        from datetime import timezone
 
         self.status = JobStatus.FAILED.value
-        self.completed_at = datetime.now(UTC)
+        self.completed_at = datetime.now(timezone.utc)
         self.error = error
 
     def mark_cancelled(self) -> None:
-        from datetime import UTC
+        from datetime import timezone
 
         self.status = JobStatus.CANCELLED.value
-        self.completed_at = datetime.now(UTC)
+        self.completed_at = datetime.now(timezone.utc)
+
+    def mark_queued_for_retry(self) -> None:
+        """Reset terminal job state so it can be re-enqueued."""
+        self.status = JobStatus.QUEUED.value
+        self.error = None
+        self.started_at = None
+        self.completed_at = None
+        self.arq_job_id = None

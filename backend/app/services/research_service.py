@@ -76,18 +76,25 @@ class ResearchService:
         return job
 
     async def list_jobs(
-        self, *, page: int = 1, page_size: int = 20
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        status: str | None = None,
     ) -> tuple[list[ResearchJob], int]:
         from sqlalchemy import func
 
-        total = await self.session.scalar(select(func.count()).select_from(ResearchJob)) or 0
+        base = select(ResearchJob)
+        count_stmt = select(func.count()).select_from(ResearchJob)
+        if status:
+            base = base.where(ResearchJob.status == status)
+            count_stmt = count_stmt.where(ResearchJob.status == status)
+
+        total = await self.session.scalar(count_stmt) or 0
         offset = (page - 1) * page_size
         rows = (
             await self.session.scalars(
-                select(ResearchJob)
-                .order_by(ResearchJob.created_at.desc())
-                .offset(offset)
-                .limit(page_size)
+                base.order_by(ResearchJob.created_at.desc()).offset(offset).limit(page_size)
             )
         ).all()
         return list(rows), int(total)
@@ -97,6 +104,32 @@ class ResearchService:
         if job.status in {JobStatus.COMPLETED.value, JobStatus.FAILED.value}:
             raise JobStateError(f"Cannot cancel job in status {job.status}")
         job.mark_cancelled()
+        await self.session.flush()
+        return job
+
+    async def retry_job(self, job_id: uuid.UUID) -> ResearchJob:
+        """Re-queue a failed or cancelled job for another research run."""
+        job = await self.get_job(job_id, detail=True)
+        if job.status not in {JobStatus.FAILED.value, JobStatus.CANCELLED.value}:
+            raise JobStateError(
+                f"Only failed or cancelled jobs can be retried (status={job.status})"
+            )
+
+        # Clear previous run artifacts so a fresh pipeline can persist results
+        for event in list(job.events or []):
+            await self.session.delete(event)
+        for link in list(job.job_papers or []):
+            await self.session.delete(link)
+        if job.report is not None:
+            await self.session.delete(job.report)
+
+        job.mark_queued_for_retry()
+        await self._add_event(
+            job,
+            "orchestrator",
+            "job_retried",
+            "Job re-queued after retry request",
+        )
         await self.session.flush()
         return job
 
