@@ -80,9 +80,24 @@ async def list_research(
     _: ApiKeyDep,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    status_filter: str | None = Query(
+        default=None,
+        alias="status",
+        description="Optional job status filter (queued, running, completed, failed, cancelled)",
+    ),
 ) -> ResearchJobListOut:
+    allowed = {s.value for s in JobStatus}
+    if status_filter and status_filter not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Allowed: {', '.join(sorted(allowed))}",
+        )
     service = ResearchService(db, settings)
-    items, total = await service.list_jobs(page=page, page_size=page_size)
+    items, total = await service.list_jobs(
+        page=page,
+        page_size=page_size,
+        status=status_filter,
+    )
     return ResearchJobListOut(
         items=[ResearchJobOut.model_validate(j) for j in items],
         total=total,
@@ -135,4 +150,31 @@ async def cancel_research(
         raise HTTPException(status_code=404, detail=exc.message) from exc
     except JobStateError as exc:
         raise HTTPException(status_code=409, detail=exc.message) from exc
+    return ResearchJobOut.model_validate(job)
+
+
+@router.post(
+    "/{job_id}/retry",
+    response_model=ResearchJobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_research(
+    job_id: uuid.UUID,
+    db: DbDep,
+    redis: RedisDep,
+    settings: SettingsDep,
+    _: ApiKeyDep,
+) -> ResearchJobOut:
+    """Re-queue a failed or cancelled research job."""
+    service = ResearchService(db, settings)
+    try:
+        job = await service.retry_job(job_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=exc.message) from exc
+    except JobStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.message) from exc
+
+    arq_job = await redis.enqueue_job("run_research_job", str(job.id))
+    job.arq_job_id = arq_job.job_id if arq_job else None
+    await db.flush()
     return ResearchJobOut.model_validate(job)
